@@ -1,11 +1,8 @@
 import { server } from "./Server";
 import { Server } from "socket.io";
+import { v4 } from "uuid";
 
-import { Map } from "./classes/Map";
-import { Player } from "./classes/Player";
-
-import { MoveEvent } from "./interfaces/MoveEvent";
-import { Fruit } from "./classes/Fruit";
+import { Room } from "./classes/Room";
 
 const io = new Server(server, {
   cors: {
@@ -13,29 +10,57 @@ const io = new Server(server, {
   },
 });
 
-const map = new Map(20, 20);
+const rooms: Room[] = [];
 
 io.on("connection", (socket) => {
   console.log("New Connection.");
 
-  const player = new Player(0, 0, "PLAYER", socket.id);
-  const fruit = new Fruit(12, 5, socket.id);
-  map.addPlayer(player);
-  map.addFruit(fruit);
+  socket.on("create-room", (req) => {
+    const roomId = v4();
 
-  socket.emit("load", map);
-  socket.broadcast.emit("update", map);
+    rooms.push(new Room(roomId, socket.id));
 
-  socket.on("move", (event: MoveEvent) => {
-    const { playerId, direction } = event;
-    map.movePlayer(playerId, direction);
-    socket.broadcast.emit("move-player", { playerId, direction });
+    socket.join(roomId);
+    socket.emit("created-room", roomId);
+    console.log("created room with id", roomId);
+  });
+
+  socket.on("connect-to-room", (roomId) => {
+    const room = rooms.find((room) => room.getId() === roomId);
+
+    if (room) {
+      if (room.getOwner() !== socket.id) {
+        if (room.getMembers().length < 2) {
+          socket.join(roomId);
+          room.addMember(socket.id);
+          socket.emit("connected-to-room", roomId);
+        } else {
+          socket.emit("connect-to-room-failed", { error: "Sala cheia." });
+        }
+      } else {
+        socket.emit("connect-to-room-failed", {
+          error: "Você já está na sala.",
+        });
+      }
+    } else {
+      socket.emit("connect-to-room-failed", { error: "Sala não existe." });
+    }
+  });
+
+  socket.on("leave-room", () => {
+    console.log("SASASASSAS");
+  });
+
+  socket.on("disconnecting", () => {
+    socket.rooms.forEach((room) => {
+      if (room !== socket.id) {
+        io.to(room).emit("player-disconnected");
+      }
+    });
   });
 
   socket.on("disconnect", () => {
     console.log("Client disconnected.");
-    map.removePlayer(player.getId());
-    io.emit("update", map);
   });
 });
 
